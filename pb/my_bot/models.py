@@ -1,7 +1,7 @@
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from datetime import datetime, timedelta
-
+import PIL
 
 class WorkingDay(models.Model):
     DAYS = [
@@ -50,7 +50,7 @@ class Work(models.Model):
     proposition = models.CharField("Назва послуги", max_length=100)
     price = models.DecimalField("Ціна", max_digits=10, decimal_places=2)
     available = models.BooleanField("Доступно", default=True)
-
+    image = models.ImageField("фото послуги", upload_to='services/', null=True, blank=True)
     def __str__(self):
         return f"{self.proposition} ({self.price} грн)"
 

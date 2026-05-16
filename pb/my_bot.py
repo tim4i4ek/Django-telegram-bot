@@ -3,13 +3,13 @@ import asyncio
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.state iort State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from datetime import datetime, timedelta
-
+import os
 API_BASE_URL = 'http://127.0.0.1:8000/api/'
-BOT_TOKEN = ''
+BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)

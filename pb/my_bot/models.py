@@ -61,6 +61,8 @@ class Appointment(models.Model):
     time_slot = models.IntegerField()
     proposition = models.ForeignKey(Work, on_delete=models.CASCADE, related_name='appointments')
     price = models.DecimalField(max_digits=10, decimal_places=2)
+    client_nickname = models.CharField(max_length=100)
+    is_approved = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.client_name} - {self.date} {self.time_slot}:00"

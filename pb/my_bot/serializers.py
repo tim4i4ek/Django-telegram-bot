@@ -38,8 +38,8 @@ from .models import Appointment, WorkingDay
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
-        fields = ['client_name', 'date', 'time_slot', 'proposition', 'price']
-
+        fields = ['client_name', 'date', 'time_slot', 'proposition', 'price','client_nickname', 'is_approved']
+        read_only_fields = ('client_nickname', 'is_approved')
     def validate(self, data):
 
         weekday = data['date'].weekday()
@@ -58,3 +58,5 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Цей час уже зайнятий.")
 
         return data
+
+

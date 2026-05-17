@@ -3,11 +3,12 @@ import asyncio
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.fsm.state iort State, StatesGroup
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from datetime import datetime, timedelta
 import os
+
 API_BASE_URL = 'http://127.0.0.1:8000/api/'
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
@@ -20,7 +21,6 @@ class BookingState(StatesGroup):
     choosing_service = State()
     choosing_date = State()
     choosing_time = State()
-
 
 
 async def fetch_api(endpoint):
@@ -41,10 +41,7 @@ async def post_appointment(data):
             return await response.json(), response.status
 
 
-
-
 async def show_main_menu(message_or_callback):
-
     text = (
         "👋 **Ласкаво просимо до нашої майстерні!**\n\n"
         "🔧 Ми спеціалізуємося на професійному обслуговуванні та ремонті.\n"
@@ -66,13 +63,10 @@ async def start_handler(message: types.Message, state: FSMContext):
     await show_main_menu(message)
 
 
-
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main_handler(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await show_main_menu(callback)
-
-
 
 
 @dp.callback_query(F.data == "start_booking")
@@ -90,10 +84,7 @@ async def show_services(callback: types.CallbackQuery, state: FSMContext):
             callback_data=f"srv_{s['id']}_{s['price']}_{s['proposition']}"
         )
 
-
     builder.button(text="⬅️ Головне меню", callback_data="back_to_main")
-
-
     builder.adjust(1)
 
     await callback.message.edit_text(
@@ -104,10 +95,8 @@ async def show_services(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(BookingState.choosing_service)
 
 
-
 @dp.callback_query(F.data.startswith("srv_"))
 async def show_dates(callback: types.CallbackQuery, state: FSMContext):
-
     _, s_id, price, name = callback.data.split("_", 3)
     await state.update_data(service_id=s_id, price=price, service_name=name)
 
@@ -115,7 +104,6 @@ async def show_dates(callback: types.CallbackQuery, state: FSMContext):
     if schedule is None:
         await callback.answer("Помилка завантаження графіка.", show_alert=True)
         return
-
 
     working_days_map = {d['day_index']: d['is_working'] for d in schedule}
 
@@ -129,24 +117,19 @@ async def show_dates(callback: types.CallbackQuery, state: FSMContext):
         display_str = current_date.strftime("%d.%m")
         weekday = current_date.weekday()
 
-
         is_working = working_days_map.get(weekday, False)
 
         if is_working:
-
             btn_text = f"{display_str}"
             cb_data = f"date_{date_str}"
         else:
-
             btn_text = f"❌ {display_str}"
             cb_data = f"off_{display_str}"
 
         date_buttons.append(types.InlineKeyboardButton(text=btn_text, callback_data=cb_data))
 
     builder.row(*date_buttons)
-
     builder.adjust(4)
-
 
     nav_builder = InlineKeyboardBuilder()
     nav_builder.button(text="⬅️ Змінити послугу", callback_data="start_booking")
@@ -161,7 +144,6 @@ async def show_dates(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="Markdown"
     )
     await state.set_state(BookingState.choosing_date)
-
 
 
 @dp.callback_query(F.data.startswith("off_"))
@@ -182,7 +164,6 @@ async def show_times(callback: types.CallbackQuery, state: FSMContext):
     dt_obj = datetime.strptime(date_val, "%Y-%m-%d")
     weekday = dt_obj.weekday()
 
-
     day_config = next((d for d in schedule if d['day_index'] == weekday), None)
 
     if not day_config or not day_config['hours']:
@@ -192,18 +173,18 @@ async def show_times(callback: types.CallbackQuery, state: FSMContext):
     builder = InlineKeyboardBuilder()
     time_buttons = []
 
+
     for slot in day_config['hours']:
+        time_display = slot['hour']
         time_buttons.append(types.InlineKeyboardButton(
-            text=f"🕒 {slot['hour']}:00",
-            callback_data=f"time_{slot['hour']}"
+            text=f"🕒 {time_display}",
+            callback_data=f"time_{time_display}"
         ))
 
     builder.row(*time_buttons)
     builder.adjust(3)
 
-
     nav_builder = InlineKeyboardBuilder()
-
     srv_id = user_data['service_id']
     price = user_data['price']
     nav_builder.button(text="⬅️ Інша дата", callback_data=f"srv_{srv_id}_{price}_{service_name}")
@@ -221,16 +202,18 @@ async def show_times(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(BookingState.choosing_time)
 
 
-
 @dp.callback_query(F.data.startswith("time_"))
 async def confirm_booking(callback: types.CallbackQuery, state: FSMContext):
     time_val = callback.data.split("_")[1]
     user_data = await state.get_data()
 
+
+    hour_int = int(time_val.split(":")[0])
+
     payload = {
         "client_name": callback.from_user.full_name,
         "date": user_data['date'],
-        "time_slot": int(time_val),
+        "time_slot": hour_int,
         "proposition": int(user_data['service_id']),
         "price": user_data['price']
     }
@@ -247,7 +230,7 @@ async def confirm_booking(callback: types.CallbackQuery, state: FSMContext):
             f"👤 **Клієнт:** {callback.from_user.full_name}\n"
             f"🛠 **Послуга:** {user_data['service_name']}\n"
             f"📅 **Дата:** {dt_display}\n"
-            f"⏰ **Час:** {time_val}:00\n"
+            f"⏰ **Час:** {time_val}\n"  
             f"💵 **До сплати:** {user_data['price']} грн\n\n"
             f"Чекаємо на вас!",
             reply_markup=builder.as_markup(),

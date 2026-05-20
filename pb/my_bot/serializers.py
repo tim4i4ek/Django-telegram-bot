@@ -10,7 +10,7 @@ class WorkSerializer(serializers.ModelSerializer):
     class Meta:
 
         model = Work
-        fields = ['proposition', 'price', 'available']
+        fields = ['proposition', 'price', 'available','id']
 
 class WorkingDaySerializer(serializers.ModelSerializer):
 

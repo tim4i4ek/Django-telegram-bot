@@ -8,8 +8,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from datetime import datetime, timedelta
 import os
+from dotenv import load_dotenv
+
+# Завантажуємо токен з .env файлу
+load_dotenv()
 
 API_BASE_URL = 'http://127.0.0.1:8000/api/'
+# Базовий URL для медіа-файлів, щоб бот міг завантажувати картинки з Django сервера
+BASE_URL = 'http://127.0.0.1:8000'
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 logging.basicConfig(level=logging.INFO)
@@ -37,8 +43,12 @@ async def fetch_api(endpoint):
 
 async def post_appointment(data):
     async with aiohttp.ClientSession() as session:
-        async with session.post(f"{API_BASE_URL}book/", json=data) as response:
-            return await response.json(), response.status
+        try:
+            async with session.post(f"{API_BASE_URL}book/", json=data) as response:
+                return await response.json(), response.status
+        except Exception as e:
+            logging.error(f"API Post Error: {e}")
+            return {"non_field_errors": ["Помилка з'єднання з сервером."]}, 500
 
 
 async def show_main_menu(message_or_callback):
@@ -54,7 +64,11 @@ async def show_main_menu(message_or_callback):
     if isinstance(message_or_callback, types.Message):
         await message_or_callback.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
     else:
-        await message_or_callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        # Якщо ми повернулися з меню з фотографією, edit_text може впасти, тому безпечніше надіслати нове повідомлення
+        try:
+            await message_or_callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        except Exception:
+            await message_or_callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 
 @dp.message(Command("start"))
@@ -77,21 +91,45 @@ async def show_services(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Список послуг тимчасово порожній.", show_alert=True)
         return
 
-    builder = InlineKeyboardBuilder()
+    # Видаляємо старе текстове повідомлення меню, бо зараз будемо виводити картки послуг
+    await callback.message.delete()
+
     for s in services:
+        # Перевіряємо, чи доступна послуга для запису
+        if not s.get('available', True):
+            continue
+
+        builder = InlineKeyboardBuilder()
         builder.button(
-            text=f"▪️ {s['proposition']} — {s['price']} грн",
+            text=f"✅ Вибрати: {s['proposition']}",
             callback_data=f"srv_{s['id']}_{s['price']}_{s['proposition']}"
         )
+        builder.adjust(1)
 
-    builder.button(text="⬅️ Головне меню", callback_data="back_to_main")
-    builder.adjust(1)
+        caption = f"🛠 **{s['proposition']}**\n\n💰 Ціна: {s['price']} грн"
 
-    await callback.message.edit_text(
-        "🛠 **Крок 1: Оберіть послугу**\nНатисніть на варіант, який вас цікавить:",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
-    )
+        # Якщо у моделі є завантажене фото, відправляємо картку з фото
+        if s.get('image'):
+            photo_url = f"{BASE_URL}{s['image']}" if s['image'].startswith('/') else s['image']
+            await callback.message.answer_photo(
+                photo=photo_url,
+                caption=caption,
+                reply_markup=builder.as_markup(),
+                parse_mode="Markdown"
+            )
+        else:
+            # Якщо фото немає — просто відправляємо гарний текст
+            await callback.message.answer(
+                caption,
+                reply_markup=builder.as_markup(),
+                parse_mode="Markdown"
+            )
+
+    # Окрема кнопка повернення в самому кінці списку
+    back_builder = InlineKeyboardBuilder()
+    back_builder.button(text="⬅️ Головне меню", callback_data="back_to_main")
+    await callback.message.answer("Або поверніться назад:", reply_markup=back_builder.as_markup())
+
     await state.set_state(BookingState.choosing_service)
 
 
@@ -138,8 +176,10 @@ async def show_dates(callback: types.CallbackQuery, state: FSMContext):
 
     builder.attach(nav_builder)
 
-    await callback.message.edit_text(
-        f"📅 **Крок 2: Оберіть дату**\nПослуга: *{name}*\n\n❌ — день позначений як вихідний.",
+    # Оскільки на попередньому кроці ми могли відправити фото, краще надіслати нове чисте повідомлення для календаря
+    await callback.message.delete()
+    await callback.message.answer(
+        f"📅 **Крок 2: Оберіть дату**\nПослуга: *{name}*\n\n❌ — день позначений в адмінці як вихідний.",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
@@ -173,9 +213,9 @@ async def show_times(callback: types.CallbackQuery, state: FSMContext):
     builder = InlineKeyboardBuilder()
     time_buttons = []
 
-
+    # Динамічно розбираємо години, які прийшли з нашого нового серіалізатора Django
     for slot in day_config['hours']:
-        time_display = slot['hour']
+        time_display = slot['hour']  # Рядок на кшталт "10:00", "11:00" або "14:30"
         time_buttons.append(types.InlineKeyboardButton(
             text=f"🕒 {time_display}",
             callback_data=f"time_{time_display}"
@@ -204,14 +244,20 @@ async def show_times(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("time_"))
 async def confirm_booking(callback: types.CallbackQuery, state: FSMContext):
-    time_val = callback.data.split("_")[1]
+    time_val = callback.data.split("_")[1]  # Отримуємо "10:00"
     user_data = await state.get_data()
 
-
+    # Оскільки у моделі Appointment поле time_slot — це IntegerField,
+    # ми забираємо лише число години (наприклад, з "14:30" візьметься 14)
     hour_int = int(time_val.split(":")[0])
+
+    # Забираємо нікнейм користувача. Якщо нікнейму немає — ставимо "Немає нікнейму"
+    username = callback.from_user.username
+    client_nickname = f"@{username}" if username else "Немає нікнейму"
 
     payload = {
         "client_name": callback.from_user.full_name,
+        "client_nickname": client_nickname,  # Додано під нову модель!
         "date": user_data['date'],
         "time_slot": hour_int,
         "proposition": int(user_data['service_id']),
@@ -226,18 +272,26 @@ async def confirm_booking(callback: types.CallbackQuery, state: FSMContext):
     if status == 201:
         dt_display = datetime.strptime(user_data['date'], "%Y-%m-%d").strftime("%d.%m.%Y")
         await callback.message.edit_text(
-            f"✅ **Успішно записано!**\n\n"
-            f"👤 **Клієнт:** {callback.from_user.full_name}\n"
+            f"✅ **Заявку успішно створено!**\n\n"
+            f"👤 **Клієнт:** {callback.from_user.full_name} ({client_nickname})\n"
             f"🛠 **Послуга:** {user_data['service_name']}\n"
             f"📅 **Дата:** {dt_display}\n"
-            f"⏰ **Час:** {time_val}\n"  
+            f"⏰ **Час:** {time_val}\n"
             f"💵 **До сплати:** {user_data['price']} грн\n\n"
-            f"Чекаємо на вас!",
+            f"⏳ *Запис очікує на підтвердження майстром в адмінці!*",
             reply_markup=builder.as_markup(),
             parse_mode="Markdown"
         )
     else:
-        error_msg = str(result.get('non_field_errors', ['Цей час уже зайнятий або недоступний.'])[0])
+        # Обробка помилок валідації від Django REST Framework
+        if isinstance(result, dict):
+            error_msg = result.get('time_slot',
+                                   result.get('date', result.get('non_field_errors', ['Помилка запису.'])[0]))
+            if isinstance(error_msg, list):
+                error_msg = error_msg[0]
+        else:
+            error_msg = "Цей час уже зайнятий або недоступний."
+
         await callback.message.edit_text(
             f"❌ **Помилка запису**\n\nПричина: {error_msg}",
             reply_markup=builder.as_markup(),

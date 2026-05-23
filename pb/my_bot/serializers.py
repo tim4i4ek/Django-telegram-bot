@@ -13,9 +13,15 @@ class WorkSerializer(serializers.ModelSerializer):
         fields = ['proposition', 'price', 'available','id']
 
 class WorkingDaySerializer(serializers.ModelSerializer):
+    hours = serializers.SerializerMethodField()
 
-    hours = WorkingHourSerializer(many=True, read_only=True)
+    class Meta:
+        model = WorkingDay
+        fields = ['day_index', 'is_working', 'hours']
 
+    def get_hours(self, obj):
+        slots = obj.get_slots()
+        return [{"hour": f"{slot:02d}:00"} for slot in slots]
     class Meta:
         model = WorkingDay
         fields = ['day_index', 'is_working', 'hours']

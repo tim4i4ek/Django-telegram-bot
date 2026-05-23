@@ -32,3 +32,9 @@ class AppointmentCreateView(generics.CreateAPIView):
 class AppointmentCreateView(generics.CreateAPIView):
     queryset = Appointment.objects.all()
     serializer_class = AppointmentCreateSerializer
+
+
+class WorkingDayListView(generics.ListAPIView):
+
+    queryset = WorkingDay.objects.all().order_by('day_index')
+    serializer_class = WorkingDaySerializer

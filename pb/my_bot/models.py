@@ -33,6 +33,7 @@ class WorkingHour(models.Model):
     INTERVAL_CHOICES = [
         (10, '10 хв'), (15, '15 хв'), (20, '20 хв'),
         (30, '30 хв'), (45, '45 хв'), (60, '60 хв'),
+        (90, '90 хв'), (120, '120 хв'), (150, 'хв')
     ]
 
     working_day = models.OneToOneField(WorkingDay, on_delete=models.CASCADE, related_name='hours')

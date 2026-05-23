@@ -14,20 +14,22 @@ class WorkingDay(models.Model):
     def __str__(self):
         return dict(self.DAYS).get(self.day_index, "Невідомо")
 
-
     def get_slots(self):
 
-        config = self.hours.first()
-        if not config or not self.is_working:
+        try:
+            config = self.hours
+            if not self.is_working:
+                return []
+
+            slots = []
+            current = config.hour_start_work
+            while current < config.hour_end_work:
+                slots.append(current)
+                current += 1
+            return slots
+        except WorkingHour.DoesNotExist:
+
             return []
-
-        slots = []
-        current = config.hour_start_work
-        while current < config.hour_end_work:
-            slots.append(current)
-            current += 1
-        return slots
-
 
 class WorkingHour(models.Model):
     INTERVAL_CHOICES = [

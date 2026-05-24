@@ -1,24 +1,23 @@
 from rest_framework import generics
-from .models import WorkingDay, Work
-from .serializers import WorkingDaySerializer, WorkSerializer,AppointmentCreateSerializer
-
+from .models import WorkingDay, Work,Appointment
+from .serializers import WorkingDaySerializer, WorkSerializer,AppointmentCreateSerializer , AppointmentSerializer
+from rest_framework import status
+from rest_framework.response import Response
 
 class ScheduleListView(generics.ListAPIView):
+
     queryset = WorkingDay.objects.all()
     serializer_class = WorkingDaySerializer
 
 
 class ServiceListView(generics.ListAPIView):
+
     queryset = Work.objects.all()
     serializer_class = WorkSerializer
 
 
-from .models import Appointment
-from .serializers import AppointmentSerializer
-from rest_framework import status
-from rest_framework.response import Response
-
 class AppointmentCreateView(generics.CreateAPIView):
+
     queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
 
@@ -29,7 +28,9 @@ class AppointmentCreateView(generics.CreateAPIView):
             return Response({"message": "Запис успішно створено!"}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class AppointmentCreateView(generics.CreateAPIView):
+
     queryset = Appointment.objects.all()
     serializer_class = AppointmentCreateSerializer
 

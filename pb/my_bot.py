@@ -278,9 +278,7 @@ async def process_time(callback: types.CallbackQuery, callback_data: TimeCb, sta
     await state.clear()
 
 
-# ==========================================
-# 8. ЗАПУСК
-# ==========================================
+
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("Бот працює в режимі Single Message Interface!")

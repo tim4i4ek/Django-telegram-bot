@@ -1,5 +1,7 @@
+from .models import WorkingHour, Work, Appointment, WorkingDay
 from rest_framework import serializers
-from .models import WorkingDay, WorkingHour, Work
+
+
 
 class WorkingHourSerializer(serializers.ModelSerializer):
     class Meta:
@@ -26,7 +28,7 @@ class WorkingDaySerializer(serializers.ModelSerializer):
         model = WorkingDay
         fields = ['day_index', 'is_working', 'hours']
 
-from .models import Appointment
+
 
 class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,11 +37,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
 
         model = Appointment
         fields = ['client_name', 'date', 'time_slot','proposition', 'price']
-
-
-from rest_framework import serializers
-from .models import Appointment, WorkingDay
-
+1
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     class Meta:

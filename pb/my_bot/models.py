@@ -65,6 +65,7 @@ class Work(models.Model):
 
 class Appointment(models.Model):
     client_name = models.CharField(max_length=100)
+    client_nickname = models.CharField("telegram нікнейм",max_length=100, null=True, blank=True)
     date = models.DateField()
     time_slot = models.IntegerField()
     proposition = models.ForeignKey(Work, on_delete=models.CASCADE, related_name='appointments')
@@ -74,3 +75,7 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"{self.client_name} - {self.date} {self.time_slot}:00"
+
+class Staff(models.Model):
+    staff_nickname = models.CharField(max_length=100)
+    staff_name = models.CharField(max_length=100)

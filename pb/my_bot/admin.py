@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import WorkingDay, WorkingHour, Work, Appointment
+from .models import WorkingDay, WorkingHour, Work, Appointment, Staff
 
 from django.utils.safestring import mark_safe
 
@@ -19,3 +19,8 @@ class AppointmentAdmin(admin.ModelAdmin):
 
 admin.site.register(WorkingDay)
 admin.site.register(WorkingHour)
+
+@admin.register(Staff)
+class StaffAdmin(admin.ModelAdmin):
+    list_display = ('staff_nickname','staff_name')
+

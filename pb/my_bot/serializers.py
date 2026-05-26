@@ -17,29 +17,28 @@ class WorkingDaySerializer(serializers.ModelSerializer):
         slots = obj.get_slots()
         return [{"hour": f"{slot:02d}:00"} for slot in slots]
 
+
 class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
-        fields = ['client_name', 'date', 'time_slot', 'proposition', 'price']
+        fields = ['id', 'client_name', 'date', 'time_slot', 'proposition', 'price', 'client_nickname']
+
 
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = ['client_name', 'date', 'time_slot', 'proposition', 'price', 'client_nickname', 'is_approved']
-        read_only_fields = ('client_nickname', 'is_approved')
+        read_only_fields = ('is_approved',)
 
     def validate(self, data):
         weekday = data['date'].weekday()
-
         working_day = WorkingDay.objects.filter(day_index=weekday, is_working=True).first()
 
         if not working_day:
             raise serializers.ValidationError("Вибачте, у цей день я не працюю.")
 
-
         allowed_slots = working_day.get_slots()
-
         if data['time_slot'] not in allowed_slots:
             raise serializers.ValidationError("У цей час я не приймаю.")
 

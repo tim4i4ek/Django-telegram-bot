@@ -11,13 +11,16 @@ class WorkingDay(models.Model):
     day_index = models.IntegerField("День тижня (0-6)", choices=DAYS, unique=True)
     is_working = models.BooleanField("Чи робочий?", default=True)
 
+
+
     def __str__(self):
         return dict(self.DAYS).get(self.day_index, "Невідомо")
 
     def get_slots(self):
-
         try:
             config = self.hours
+            print(f"DEBUG: День {self.day_index}, старт={config.hour_start_work}, кінець={config.hour_end_work}")
+
             if not self.is_working:
                 return []
 
@@ -26,16 +29,18 @@ class WorkingDay(models.Model):
             while current < config.hour_end_work:
                 slots.append(current)
                 current += 1
+            print(f"DEBUG: Сформовані слоти: {slots}")
             return slots
-        except WorkingHour.DoesNotExist:
 
+        except WorkingHour.DoesNotExist:
+            print(f"DEBUG: Для дня {self.day_index} не знайдено WorkingHour!")
             return []
 
 class WorkingHour(models.Model):
     INTERVAL_CHOICES = [
         (10, '10 хв'), (15, '15 хв'), (20, '20 хв'),
         (30, '30 хв'), (45, '45 хв'), (60, '60 хв'),
-        (90, '90 хв'), (120, '120 хв'), (150, 'хв')
+        (90, '90 хв'), (120, '120 хв'), (150, '150 хв')
     ]
 
     working_day = models.OneToOneField(WorkingDay, on_delete=models.CASCADE, related_name='hours')

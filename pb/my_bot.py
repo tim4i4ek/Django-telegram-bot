@@ -14,7 +14,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.exceptions import TelegramBadRequest
 
 # ==========================================
-# 1. НАЛАШТУВАННЯ
+# 1. НАСТРОЙКИ И ИНИЦИАЛИЗАЦИЯ
 # ==========================================
 load_dotenv()
 
@@ -30,7 +30,7 @@ dp.include_router(router)
 
 
 # ==========================================
-# 2. СТАНИ ТА COЛБЕКИ
+# 2. ФАБРИКИ КОЛБЕКОВ И СОСТОЯНИЯ (FSM)
 # ==========================================
 class BookingState(StatesGroup):
     choosing_service = State()
@@ -47,12 +47,12 @@ class DateCb(CallbackData, prefix="date"):
 
 
 class TimeCb(CallbackData, prefix="time"):
-    val: str  # Тут буде зберігатися безпечний час (наприклад, "10-00")
+    val: str  # Передается в формате "10-00" (без двоеточий во избежание ValueError)
     hour: int
 
 
 # ==========================================
-# 3. API КЛІЄНТ
+# 3. API КЛИЕНТ
 # ==========================================
 async def fetch_api(endpoint: str):
     async with aiohttp.ClientSession() as session:
@@ -77,8 +77,9 @@ async def post_api(endpoint: str, data: dict):
 
 
 # ==========================================
-# 4. ГОЛОВНЕ МЕНЮ
+# 4. ИЗОЛИРОВАННЫЕ ФУНКЦИИ ИНТЕРФЕЙСА (UI SCREENS)
 # ==========================================
+
 def get_main_menu_data():
     text = (
         "👋 **Ласкаво просимо до нашої майстерні!**\n\n"
@@ -90,35 +91,11 @@ def get_main_menu_data():
     return text, kb.as_markup()
 
 
-@router.message(CommandStart())
-async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear()
-    try:
-        await message.delete()
-    except TelegramBadRequest:
-        pass
-
-    text, reply_markup = get_main_menu_data()
-    await message.answer(text, reply_markup=reply_markup, parse_mode="Markdown")
-
-
-@router.callback_query(F.data == "back_to_main")
-async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer()
-    text, reply_markup = get_main_menu_data()
-    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-
-
-# ==========================================
-# 5. КРОК 1: ВИБІР ПОСЛУГИ
-# ==========================================
-@router.callback_query(F.data == "start_booking")
-async def show_services(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
+async def show_services_screen(message: types.Message, state: FSMContext):
+    """Экран Шага 1: Выбор услуги"""
     services = await fetch_api('services/')
     if not services:
-        await callback.message.edit_text(
+        await message.edit_text(
             "🚨 Список послуг наразі порожній.\nСпробуйте пізніше.",
             reply_markup=InlineKeyboardBuilder().button(text="🏠 Меню", callback_data="back_to_main").as_markup()
         )
@@ -136,31 +113,14 @@ async def show_services(callback: types.CallbackQuery, state: FSMContext):
     kb.row(types.InlineKeyboardButton(text="🏠 Головне меню", callback_data="back_to_main"))
 
     await state.set_state(BookingState.choosing_service)
-    await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 
-# ==========================================
-# 6. КРОК 2: ВИБІР ДАТИ
-# ==========================================
-@router.callback_query(ServiceCb.filter(), BookingState.choosing_service)
-async def process_service(callback: types.CallbackQuery, callback_data: ServiceCb, state: FSMContext):
-    await callback.answer()
-    services = await fetch_api('services/')
-    selected_service = next((s for s in services if s['id'] == callback_data.id), None)
-
-    if not selected_service:
-        await callback.message.edit_text("Помилка: Послугу не знайдено.")
-        return
-
-    await state.update_data(
-        service_id=selected_service['id'],
-        service_name=selected_service['proposition'],
-        service_price=selected_service['price']
-    )
-
+async def show_dates_screen(message: types.Message, service_name: str, service_price: float, state: FSMContext):
+    """Экран Шага 2: Выбор даты (Календарь)"""
     schedule = await fetch_api('schedule/')
     if schedule is None:
-        await callback.message.edit_text("Помилка завантаження графіка робочих днів.")
+        await message.edit_text("Помилка завантаження графіка робочих днів.")
         return
 
     working_days_map = {int(d['day_index']): d['is_working'] for d in schedule}
@@ -185,37 +145,24 @@ async def process_service(callback: types.CallbackQuery, callback_data: ServiceC
     kb.row(*date_buttons)
     kb.adjust(4)
 
-    kb.row(types.InlineKeyboardButton(text="⬅️ Змінити послугу", callback_data="start_booking"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад до послуг", callback_data="start_booking"))
     kb.row(types.InlineKeyboardButton(text="🏠 Головне меню", callback_data="back_to_main"))
 
     text = (
         f"📅 **Крок 2: Оберіть дату**\n\n"
-        f"Послуга: *{selected_service['proposition']}*\n"
-        f"Вартість: *{selected_service['price']} грн*\n\n"
+        f"Послуга: *{service_name}*\n"
+        f"Вартість: *{service_price} грн*\n\n"
         f"❌ — означає вихідний день."
     )
-    await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
     await state.set_state(BookingState.choosing_date)
+    await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 
-@router.callback_query(F.data.startswith("off_"))
-async def weekend_clicked(callback: types.CallbackQuery):
-    await callback.answer("Цей день є вихідним, оберіть іншу дату!", show_alert=True)
-
-
-# ==========================================
-# 7. КРОК 3: ВИБІР ЧАСУ (ВИПРАВЛЕНО)
-# ==========================================
-@router.callback_query(DateCb.filter(), BookingState.choosing_date)
-async def process_date(callback: types.CallbackQuery, callback_data: DateCb, state: FSMContext):
-    await callback.answer()
-    date_val = callback_data.val
-    await state.update_data(date=date_val)
-    user_data = await state.get_data()
-
+async def show_times_screen(message: types.Message, date_val: str, service_name: str, state: FSMContext):
+    """Экран Шага 3: Выбор доступного времени"""
     schedule = await fetch_api('schedule/')
     if not schedule:
-        await callback.message.edit_text("🚨 Помилка: Не вдалося отримати графік з сервера.")
+        await message.edit_text("🚨 Помилка: Не вдалося отримати графік з сервера.")
         return
 
     dt_obj = datetime.strptime(date_val, "%Y-%m-%d")
@@ -224,47 +171,133 @@ async def process_date(callback: types.CallbackQuery, callback_data: DateCb, sta
     day_config = next((d for d in schedule if int(d['day_index']) == target_weekday), None)
 
     if not day_config or not day_config.get('hours'):
-        await callback.message.edit_text(
+        await message.edit_text(
             "❌ На цей день немає вільних годин для запису.",
-            reply_markup=InlineKeyboardBuilder().button(text="⬅️ Назад до дат", callback_data=ServiceCb(
-                id=user_data['service_id']).pack()).as_markup()
+            reply_markup=InlineKeyboardBuilder().button(text="⬅️ Назад до дат",
+                                                        callback_data="back_to_dates").as_markup()
         )
         return
 
     kb = InlineKeyboardBuilder()
     for slot in day_config['hours']:
-        time_display = slot['hour']  # Наприклад, "09:00"
+        time_display = slot['hour']  # "09:00"
         hour_int = int(time_display.split(":")[0])
-
-        # Замінюємо ":" на "-", щоб уникнути конфліктів у CallbackData
-        safe_time_val = time_display.replace(":", "-")
+        safe_time_val = time_display.replace(":", "-")  # Безопасно убираем ":" для aiogram
 
         kb.button(text=f"🕒 {time_display}", callback_data=TimeCb(val=safe_time_val, hour=hour_int).pack())
 
     kb.adjust(3)
-    kb.row(types.InlineKeyboardButton(
-        text="⬅️ Обрати іншу дату", callback_data=ServiceCb(id=user_data['service_id']).pack()
-    ))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Обрати іншу дату", callback_data="back_to_dates"))
     kb.row(types.InlineKeyboardButton(text="🏠 Головне меню", callback_data="back_to_main"))
 
     display_date = dt_obj.strftime("%d.%m.%Y")
-    text = f"⏰ **Крок 3: Оберіть час**\n\nДата: *{display_date}*\nПослуга: *{user_data['service_name']}*"
+    text = f"⏰ **Крок 3: Оберіть час**\n\nДата: *{display_date}*\nПослуга: *{service_name}*"
 
-    await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
     await state.set_state(BookingState.choosing_time)
+    await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 
 # ==========================================
-# 8. КРОК 4: ЗАПИС (ВИПРАВЛЕНО)
+# 5. ДИСПЕТЧЕРИЗАЦИЯ И ХЕНДЛЕРЫ СОБЫТИЙ
 # ==========================================
-@router.callback_query(TimeCb.filter(), BookingState.choosing_time)
-async def process_time(callback: types.CallbackQuery, callback_data: TimeCb, state: FSMContext):
+
+@router.message(CommandStart())
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+
+    text, reply_markup = get_main_menu_data()
+    await message.answer(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+@router.callback_query(F.data == "back_to_main")
+async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.answer()
+    text, reply_markup = get_main_menu_data()
+    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+@router.callback_query(F.data == "start_booking")
+async def process_start_booking(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await show_services_screen(callback.message, state)
+
+
+@router.callback_query(ServiceCb.filter())
+async def process_service_selected(callback: types.CallbackQuery, callback_data: ServiceCb, state: FSMContext):
+    await callback.answer()
+    services = await fetch_api('services/')
+    selected_service = next((s for s in services if s['id'] == callback_data.id), None)
+
+    if not selected_service:
+        await callback.message.edit_text("Помилка: Послугу не знайдено.")
+        return
+
+    # Записываем данные в сессию FSM
+    await state.update_data(
+        service_id=selected_service['id'],
+        service_name=selected_service['proposition'],
+        service_price=selected_service['price']
+    )
+
+    await show_dates_screen(
+        message=callback.message,
+        service_name=selected_service['proposition'],
+        service_price=selected_service['price'],
+        state=state
+    )
+
+
+@router.callback_query(F.data == "back_to_dates")
+async def process_back_to_dates(callback: types.CallbackQuery, state: FSMContext):
+    """Универсальный возврат назад к календарю дат из любого подменю"""
     await callback.answer()
     user_data = await state.get_data()
 
-    # Повертаємо красиве відображення часу з двокрапкою для тексту повідомлення
-    beautiful_time = callback_data.val.replace("-", ":")
+    # Если данные сбросились, мягко возвращаем в самое начало
+    if 'service_name' not in user_data:
+        await show_services_screen(callback.message, state)
+        return
 
+    await show_dates_screen(
+        message=callback.message,
+        service_name=user_data['service_name'],
+        service_price=user_data['service_price'],
+        state=state
+    )
+
+
+@router.callback_query(F.data.startswith("off_"))
+async def weekend_clicked(callback: types.CallbackQuery):
+    await callback.answer("Цей день є вихідним, оберіть іншу дату!", show_alert=True)
+
+
+@router.callback_query(DateCb.filter())
+async def process_date_selected(callback: types.CallbackQuery, callback_data: DateCb, state: FSMContext):
+    await callback.answer()
+    date_val = callback_data.val
+    await state.update_data(date=date_val)
+
+    user_data = await state.get_data()
+    await show_times_screen(
+        message=callback.message,
+        date_val=date_val,
+        service_name=user_data.get('service_name', 'Послуга'),
+        state=state
+    )
+
+
+@router.callback_query(TimeCb.filter())
+async def process_time_final_booking(callback: types.CallbackQuery, callback_data: TimeCb, state: FSMContext):
+    await callback.answer()
+    user_data = await state.get_data()
+
+    # Конвертируем дефис обратно в красивое двоеточие для клиента
+    beautiful_time = callback_data.val.replace("-", ":")
     client_nickname = f"@{callback.from_user.username}" if callback.from_user.username else "Приховано"
 
     payload = {
@@ -298,6 +331,9 @@ async def process_time(callback: types.CallbackQuery, callback_data: TimeCb, sta
     await state.clear()
 
 
+# ==========================================
+# 6. ТОЧКА ВХОДА В СИСТЕМУ
+# ==========================================
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("Бот успішно запущений!")

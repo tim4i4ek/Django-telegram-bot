@@ -14,7 +14,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.exceptions import TelegramBadRequest
 
 # ==========================================
-# 1. НАСТРОЙКИ И ИНИЦИАЛИЗАЦИЯ
+# 1. НАЛАШТУВАННЯ ТА ІНІЦІАЛІЗАЦІЯ
 # ==========================================
 load_dotenv()
 
@@ -30,7 +30,7 @@ dp.include_router(router)
 
 
 # ==========================================
-# 2. ФАБРИКИ КОЛБЕКОВ И СОСТОЯНИЯ (FSM)
+# 2. СТАНИ ТА КОЛБЕКИ (FSM)
 # ==========================================
 class BookingState(StatesGroup):
     choosing_service = State()
@@ -47,12 +47,17 @@ class DateCb(CallbackData, prefix="date"):
 
 
 class TimeCb(CallbackData, prefix="time"):
-    val: str  # Передается в формате "10-00" (без двоеточий во избежание ValueError)
+    val: str
     hour: int
 
 
+# Пагінація для чистого перегляду довгих послуг
+class PageCb(CallbackData, prefix="page"):
+    idx: int
+
+
 # ==========================================
-# 3. API КЛИЕНТ
+# 3. API КЛІЄНТ
 # ==========================================
 async def fetch_api(endpoint: str):
     async with aiohttp.ClientSession() as session:
@@ -77,7 +82,7 @@ async def post_api(endpoint: str, data: dict):
 
 
 # ==========================================
-# 4. ИЗОЛИРОВАННЫЕ ФУНКЦИИ ИНТЕРФЕЙСА (UI SCREENS)
+# 4. ЧИСТИЙ ІНТЕРФЕЙС: ЕКРАНИ (UI)
 # ==========================================
 
 def get_main_menu_data():
@@ -91,25 +96,48 @@ def get_main_menu_data():
     return text, kb.as_markup()
 
 
-async def show_services_screen(message: types.Message, state: FSMContext):
-    """Экран Шага 1: Выбор услуги"""
+async def show_services_page(message: types.Message, page_index: int, state: FSMContext):
+    """Каталог послуг у вигляді акуратних карток з пагінацією (вперед/назад)"""
     services = await fetch_api('services/')
-    if not services:
+    # Фільтруємо лише доступні
+    available_services = [s for s in services if s.get('available', True)] if services else []
+
+    if not available_services:
         await message.edit_text(
             "🚨 Список послуг наразі порожній.\nСпробуйте пізніше.",
             reply_markup=InlineKeyboardBuilder().button(text="🏠 Меню", callback_data="back_to_main").as_markup()
         )
         return
 
-    text = "🛠 **Крок 1: Оберіть послугу з переліку:**\n\n"
+    # Захист від виходу за межі списку послуг
+    if page_index >= len(available_services):
+        page_index = 0
+    elif page_index < 0:
+        page_index = len(available_services) - 1
+
+    current_service = available_services[page_index]
+
+    # Будуємо гарний чистий текст (назва послуги може бути будь-якої довжини!)
+    text = (
+        f"🛠 **Крок 1: Оберіть послугу**\n\n"
+        f"📋 **Назва:** {current_service['proposition']}\n"
+        f"💰 **Вартість:** {current_service['price']} грн\n\n"
+        f"📖 *Послуга {page_index + 1} із {len(available_services)}*"
+    )
+
     kb = InlineKeyboardBuilder()
 
-    for s in services:
-        if s.get('available', True):
-            btn_text = f"{s['proposition']} — {s['price']} грн"
-            kb.button(text=btn_text, callback_data=ServiceCb(id=s['id']).pack())
-
-    kb.adjust(1)
+    # Ряд кнопок перемикання (Пагінація)
+    kb.row(
+        types.InlineKeyboardButton(text="⬅️ Минуло", callback_data=PageCb(idx=page_index - 1).pack()),
+        types.InlineKeyboardButton(text="Далі ➡️", callback_data=PageCb(idx=page_index + 1).pack())
+    )
+    # Кнопка вибору конкретно цієї послуги
+    kb.row(types.InlineKeyboardButton(
+        text="✅ Обрати цю послугу",
+        callback_data=ServiceCb(id=current_service['id']).pack()
+    ))
+    # Повернення в меню
     kb.row(types.InlineKeyboardButton(text="🏠 Головне меню", callback_data="back_to_main"))
 
     await state.set_state(BookingState.choosing_service)
@@ -117,7 +145,7 @@ async def show_services_screen(message: types.Message, state: FSMContext):
 
 
 async def show_dates_screen(message: types.Message, service_name: str, service_price: float, state: FSMContext):
-    """Экран Шага 2: Выбор даты (Календарь)"""
+    """Календар вибору дат"""
     schedule = await fetch_api('schedule/')
     if schedule is None:
         await message.edit_text("Помилка завантаження графіка робочих днів.")
@@ -149,17 +177,17 @@ async def show_dates_screen(message: types.Message, service_name: str, service_p
     kb.row(types.InlineKeyboardButton(text="🏠 Головне меню", callback_data="back_to_main"))
 
     text = (
-        f"📅 **Крок 2: Оберіть дату**\n\n"
-        f"Послуга: *{service_name}*\n"
-        f"Вартість: *{service_price} грн*\n\n"
-        f"❌ — означає вихідний день."
+        f"📅 **Крок 2: Оберіть дату візиту**\n\n"
+        f"📋 Послуга: *{service_name}*\n"
+        f"💰 Вартість: *{service_price} грн*\n\n"
+        f"❌ — означає вихідний день майстра."
     )
     await state.set_state(BookingState.choosing_date)
     await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 
 async def show_times_screen(message: types.Message, date_val: str, service_name: str, state: FSMContext):
-    """Экран Шага 3: Выбор доступного времени"""
+    """Екран вибору вільного часу"""
     schedule = await fetch_api('schedule/')
     if not schedule:
         await message.edit_text("🚨 Помилка: Не вдалося отримати графік з сервера.")
@@ -180,9 +208,9 @@ async def show_times_screen(message: types.Message, date_val: str, service_name:
 
     kb = InlineKeyboardBuilder()
     for slot in day_config['hours']:
-        time_display = slot['hour']  # "09:00"
+        time_display = slot['hour']
         hour_int = int(time_display.split(":")[0])
-        safe_time_val = time_display.replace(":", "-")  # Безопасно убираем ":" для aiogram
+        safe_time_val = time_display.replace(":", "-")
 
         kb.button(text=f"🕒 {time_display}", callback_data=TimeCb(val=safe_time_val, hour=hour_int).pack())
 
@@ -191,14 +219,18 @@ async def show_times_screen(message: types.Message, date_val: str, service_name:
     kb.row(types.InlineKeyboardButton(text="🏠 Головне меню", callback_data="back_to_main"))
 
     display_date = dt_obj.strftime("%d.%m.%Y")
-    text = f"⏰ **Крок 3: Оберіть час**\n\nДата: *{display_date}*\nПослуга: *{service_name}*"
+    text = (
+        f"⏰ **Крок 3: Оберіть зручний час**\n\n"
+        f"📅 Дата: *{display_date}*\n"
+        f"📋 Послуга: *{service_name}*"
+    )
 
     await state.set_state(BookingState.choosing_time)
     await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 
 # ==========================================
-# 5. ДИСПЕТЧЕРИЗАЦИЯ И ХЕНДЛЕРЫ СОБЫТИЙ
+# 5. ХЕНДЛЕРИ ТА ОБРОБКА ПОДІЙ
 # ==========================================
 
 @router.message(CommandStart())
@@ -224,7 +256,15 @@ async def back_to_main(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "start_booking")
 async def process_start_booking(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
-    await show_services_screen(callback.message, state)
+    # Завжди стартуємо з першої послуги (індекс 0)
+    await show_services_page(callback.message, page_index=0, state=state)
+
+
+@router.callback_query(PageCb.filter())
+async def process_service_pagination(callback: types.CallbackQuery, callback_data: PageCb, state: FSMContext):
+    """Обробка перемикання послуг «Вліво / Вправо»"""
+    await callback.answer()
+    await show_services_page(callback.message, page_index=callback_data.idx, state=state)
 
 
 @router.callback_query(ServiceCb.filter())
@@ -237,7 +277,6 @@ async def process_service_selected(callback: types.CallbackQuery, callback_data:
         await callback.message.edit_text("Помилка: Послугу не знайдено.")
         return
 
-    # Записываем данные в сессию FSM
     await state.update_data(
         service_id=selected_service['id'],
         service_name=selected_service['proposition'],
@@ -254,13 +293,11 @@ async def process_service_selected(callback: types.CallbackQuery, callback_data:
 
 @router.callback_query(F.data == "back_to_dates")
 async def process_back_to_dates(callback: types.CallbackQuery, state: FSMContext):
-    """Универсальный возврат назад к календарю дат из любого подменю"""
     await callback.answer()
     user_data = await state.get_data()
 
-    # Если данные сбросились, мягко возвращаем в самое начало
     if 'service_name' not in user_data:
-        await show_services_screen(callback.message, state)
+        await show_services_page(callback.message, page_index=0, state=state)
         return
 
     await show_dates_screen(
@@ -296,7 +333,6 @@ async def process_time_final_booking(callback: types.CallbackQuery, callback_dat
     await callback.answer()
     user_data = await state.get_data()
 
-    # Конвертируем дефис обратно в красивое двоеточие для клиента
     beautiful_time = callback_data.val.replace("-", ":")
     client_nickname = f"@{callback.from_user.username}" if callback.from_user.username else "Приховано"
 
@@ -306,7 +342,7 @@ async def process_time_final_booking(callback: types.CallbackQuery, callback_dat
         "date": user_data['date'],
         "time_slot": callback_data.hour,
         "proposition": user_data['service_id'],
-        "price": user_data['service_price']
+        "price": user_data['price'] if 'price' in user_data else user_data['service_price']
     }
 
     result, status_code = await post_api('book/', payload)
@@ -332,11 +368,11 @@ async def process_time_final_booking(callback: types.CallbackQuery, callback_dat
 
 
 # ==========================================
-# 6. ТОЧКА ВХОДА В СИСТЕМУ
+# 6. ЗАПУСК
 # ==========================================
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("Бот успішно запущений!")
+    logging.info("Бот успішно запущений в режимі чистого інтерфейсу!")
     await dp.start_polling(bot)
 
 

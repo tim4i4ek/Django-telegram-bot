@@ -32,6 +32,21 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ('is_approved',)
 
     def validate(self, data):
+
+        client_nickname = data.get('client_nickname')
+        if client_nickname and client_nickname != "Приховано":
+
+            active_appointments_count = Appointment.objects.filter(
+                client_nickname=client_nickname,
+                date__gte=datetime_date.today()
+            ).count()
+
+            if active_appointments_count >= 3:
+                raise serializers.ValidationError(
+                    "У вас уже є 3 активні записи! Ви не можете створити нову, поки не мине або не скасується одна з існуючих."
+                )
+
+
         weekday = data['date'].weekday()
         working_day = WorkingDay.objects.filter(day_index=weekday, is_working=True).first()
 

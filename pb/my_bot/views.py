@@ -40,3 +40,11 @@ class AppointmentCreateView(generics.CreateAPIView):
 class AppointmentDeleteView(generics.DestroyAPIView):
     queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
+
+class ClientAppointmentListView(generics.ListAPIView):
+    serializer_class = AppointmentSerializer
+
+    def get_queryset(self):
+        nickname = self.kwargs['nickname'].replace('@', '').strip()
+        from datetime import date
+        return Appointment.objects.filter(client_nickname__iexact=f"@{nickname}", date__gte=date.today()).order_by('date', 'time_slot')

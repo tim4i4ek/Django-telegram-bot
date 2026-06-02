@@ -62,3 +62,5 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Цей час уже зайнятий.")
 
         return data
+
+

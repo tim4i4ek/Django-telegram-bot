@@ -4,7 +4,6 @@ import asyncio
 import aiohttp
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-
 from aiogram import Bot, Dispatcher, Router, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.state import State, StatesGroup
@@ -480,6 +479,224 @@ async def process_staff_delete(callback: types.CallbackQuery, callback_data: Sta
                                        data.get('company_name'), state)
 
 
+# ==========================================
+# ДОПОЛНИТЕЛЬНЫЕ КОЛБЕКИ ДЛЯ АДМИНКИ БОТА
+# ==========================================
+class StaffApproveCb(CallbackData, prefix="st_app"):
+    id: int
+
+
+# Стан для перемикання фільтрів в адмінці
+class StaffState(StatesGroup):
+    browsing_all = State()
+    browsing_new = State()
+
+
+# ==========================================
+# ОБНОВЛЕННЫЙ ИНТЕРФЕЙС АДМИН-ПАНЕЛИ
+# ==========================================
+
+# Главное меню админки (вызывается по /staff)
+async def show_staff_main_menu(message: types.Message, staff_name: str, company_name: str, state: FSMContext):
+    appointments = await fetch_api('staff/appointments/') or []
+
+    # Считаем статистику
+    total_count = len(appointments)
+    new_count = len([a for a in appointments if not a.get('is_approved', False)])
+    total_earnings = sum(float(a['price']) for a in appointments if a.get('is_approved', False))
+
+    text = (
+        f"💼 **Адмін-панель працівника**\n"
+        f"👤 Вітаємо, **{staff_name}**!\n"
+        f"🏢 Компанія: `{company_name}`\n"
+        f"───────────────────\n"
+        f"📊 **Статистика майстерні:**\n"
+        f"🔹 Всього активних записів: `{total_count}`\n"
+        f"🔸 Очікують підтвердження: `{new_count}`\n"
+        f"💰 Підтверджена каса: `{total_earnings:.2f} грн`"
+    )
+
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text=f"📥 Нові заявки ({new_count})", callback_data="staff_view_new"))
+    kb.row(types.InlineKeyboardButton(text="📋 Всі записи по порядку", callback_data="staff_view_all"))
+    kb.row(types.InlineKeyboardButton(text="🏠 Вийти на головну", callback_data="back_to_main"))
+
+    await state.update_data(staff_name=staff_name, company_name=company_name)
+
+    try:
+        await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    except Exception:
+        await message.answer(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+
+
+# Экран листания записей (универсальный для "Всех" и "Новых")
+async def show_staff_appointments_page(message: types.Message, page_index: int, state: FSMContext,
+                                       filter_new_only=False):
+    appointments = await fetch_api('staff/appointments/') or []
+    user_data = await state.get_data()
+    staff_name = user_data.get('staff_name', 'Працівник')
+    company_name = user_data.get('company_name', 'Компанія')
+
+    # Фильтруем, если админ нажал смотреть только новые
+    if filter_new_only:
+        appointments = [a for a in appointments if not a.get('is_approved', False)]
+        await state.set_state(StaffState.browsing_new)
+    else:
+        await state.set_state(StaffState.browsing_all)
+
+    if not appointments:
+        mode_text = "нових записів, що очікують обробки," if filter_new_only else "записів у базі даних"
+        text = f"👋 **{staff_name}**, наразі немає {mode_text}.\n\nВсі клієнти розібрані!"
+        kb = InlineKeyboardBuilder().button(text="⬅️ Назад в адмінку", callback_data="staff_menu_home")
+        await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+        return
+
+    # Защита от выхода за границы списка
+    if page_index >= len(appointments):
+        page_index = 0
+    elif page_index < 0:
+        page_index = len(appointments) - 1
+
+    apt = appointments[page_index]
+    dt_display = datetime.strptime(apt['date'], "%Y-%m-%d").strftime("%d.%m.%Y")
+
+    # Красивый статус подгверждения
+    status_icon = "✅ ПІДТВЕРДЖЕНО" if apt.get('is_approved', False) else "⏳ ОЧІКУЄ ПІДТВЕРДЖЕННЯ"
+
+    text = (
+        f"📋 **Заявка №{apt['id']}** (Картка {page_index + 1} із {len(appointments)})\n"
+        f"───────────────────\n"
+        f"Статус: **{status_icon}**\n\n"
+        f"👤 **Клієнт:** {apt['client_name']}\n"
+        f"📱 **Нікнейм:** {apt['client_nickname']}\n"
+        f"📅 **Дата:** {dt_display}\n"
+        f"⏰ **Час візиту:** {apt['time_slot']}:00\n"
+        f"💵 **Вартість:** {apt['price']} грн"
+    )
+
+    kb = InlineKeyboardBuilder()
+
+    # Кнопки перелистывания (передаем кастомный префикс в зависимости от режима)
+    kb.row(
+        types.InlineKeyboardButton(text="⬅️ Минулий", callback_data=StaffPageCb(idx=page_index - 1).pack()),
+        types.InlineKeyboardButton(text="Наступний ➡️", callback_data=StaffPageCb(idx=page_index + 1).pack())
+    )
+
+    # Кнопка подтверждения (показывается только если запись НЕ подтверждена)
+    if not apt.get('is_approved', False):
+        kb.row(
+            types.InlineKeyboardButton(text="✅ Підтвердити запис", callback_data=StaffApproveCb(id=apt['id']).pack()))
+
+    # Кнопка связи
+    if apt['client_nickname'] and apt['client_nickname'] != "Приховано":
+        kb.row(types.InlineKeyboardButton(text="💬 Написати клієнту",
+                                          url=f"https://t.me/{apt['client_nickname'].replace('@', '')}"))
+
+    kb.row(types.InlineKeyboardButton(text="❌ Видалити/Відхилити", callback_data=StaffDeleteCb(id=apt['id']).pack()))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Головне меню адмінки", callback_data="staff_menu_home"))
+
+    await state.update_data(staff_page_idx=page_index)
+    try:
+        await message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    except Exception:
+        await message.answer(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+
+
+# ==========================================
+# ХЕНДЛЕРЫ АДМИНИСТРАТОРА
+# ==========================================
+
+# 1. Вход по команде /staff
+@router.message(F.text == "/staff")
+async def cmd_staff_login(message: types.Message, state: FSMContext):
+    if not message.from_user.username:
+        await message.answer("🚨 Для входу в адмінку у вас повинен бути встановлений Telegram Username.")
+        return
+
+    print(f"\n[STAFF TRY] Спроба входу в адмінку від @{message.from_user.username}")
+    staff_data = await fetch_api(f"staff/check/{message.from_user.username}/")
+
+    if staff_data and staff_data.get('is_staff'):
+        print(f"[STAFF SUCCESS] Працівник {staff_data['name']} успішно авторизований!")
+        await show_staff_main_menu(message, staff_data['name'], staff_data['company_name'], state)
+    else:
+        await message.answer("🛑 Ви не є зареєстрованим працівником. Доступ закритий.")
+
+
+# Возврат в главное меню админки по кнопке
+@router.callback_query(F.data == "staff_menu_home")
+async def callback_staff_home(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    await show_staff_main_menu(callback.message, data.get('staff_name'), data.get('company_name'), state)
+
+
+# Выбор режима: Только Новые
+@router.callback_query(F.data == "staff_view_new")
+async def callback_view_new(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await show_staff_appointments_page(callback.message, 0, state, filter_new_only=True)
+
+
+# Выбор режима: Все подряд
+@router.callback_query(F.data == "staff_view_all")
+async def callback_view_all(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await show_staff_appointments_page(callback.message, 0, state, filter_new_only=False)
+
+
+# Листание страниц внутри админки
+@router.callback_query(StaffPageCb.filter())
+async def process_staff_pagination(callback: types.CallbackQuery, callback_data: StaffPageCb, state: FSMContext):
+    await callback.answer()
+    current_state = await state.get_state()
+    filter_new = (current_state == StaffState.browsing_new.state)
+    await show_staff_appointments_page(callback.message, callback_data.idx, state, filter_new_only=filter_new)
+
+
+# Хендлер НАЖАТИЯ КНОПКИ "ПОДТВЕРДИТЬ ЗАПИСЬ"
+@router.callback_query(StaffApproveCb.filter())
+async def process_staff_approve(callback: types.CallbackQuery, callback_data: StaffApproveCb, state: FSMContext):
+    print(f"[STAFF ACTION] Адмін підтверджує запис ID: {callback_data.id}")
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(f"{API_BASE_URL}book/{callback_data.id}/approve/") as response:
+                if response.status == 200:
+                    await callback.answer("✅ Запис успішно підтверджено!", show_alert=True)
+                else:
+                    await callback.answer("🚨 Помилка при підтвердженні на сервері.", show_alert=True)
+        except Exception as e:
+            print(f"[STAFF ERROR] Не вдалося з'єднатися з API для підтвердження: {e}")
+            await callback.answer("🚨 Помилка з'єднання.", show_alert=True)
+
+    data = await state.get_data()
+    current_state = await state.get_state()
+    filter_new = (current_state == StaffState.browsing_new.state)
+
+    # Обновляем эту же страницу, чтобы пропала кнопка "Подтвердить" и изменился статус
+    await show_staff_appointments_page(callback.message, data.get('staff_page_idx', 0), state,
+                                       filter_new_only=filter_new)
+
+
+# Хендлер НАЖАТИЯ КНОПКИ "УДАЛИТЬ/ОТКЛОНИТЬ"
+@router.callback_query(StaffDeleteCb.filter())
+async def process_staff_delete(callback: types.CallbackQuery, callback_data: StaffDeleteCb, state: FSMContext):
+    print(f"[STAFF ACTION] Адмін видаляє запис ID: {callback_data.id}")
+    status_code = await delete_api(f"book/{callback_data.id}/delete/")
+    data = await state.get_data()
+
+    if status_code in [200, 204]:
+        await callback.answer("🗑 Запис видалено з бази!", show_alert=True)
+    else:
+        await callback.answer("🚨 Помилка видалення.", show_alert=True)
+
+    current_state = await state.get_state()
+    filter_new = (current_state == StaffState.browsing_new.state)
+
+    # Смещаемся на ту же страницу (если она была последней, метод защитит от выхода за границы)
+    await show_staff_appointments_page(callback.message, data.get('staff_page_idx', 0), state,
+                                       filter_new_only=filter_new)
 # ==========================================
 # 7. ЗАПУСК
 # ==========================================

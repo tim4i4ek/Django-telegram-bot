@@ -1,5 +1,7 @@
 from rest_framework import generics, status
 from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from .models import WorkingDay, Work, Appointment
 
 from .serializers import WorkingDaySerializer, WorkSerializer, AppointmentCreateSerializer, AppointmentSerializer
@@ -48,3 +50,16 @@ class ClientAppointmentListView(generics.ListAPIView):
         nickname = self.kwargs['nickname'].replace('@', '').strip()
         from datetime import date
         return Appointment.objects.filter(client_nickname__iexact=f"@{nickname}", date__gte=date.today()).order_by('date', 'time_slot')
+
+
+class AppointmentApproveView(APIView):
+    def post(self, request, pk):
+        try:
+            appointment = Appointment.objects.get(pk=pk)
+            appointment.is_approved = True
+            appointment.save()
+            print(f"[STAFF API] Запис №{pk} успішно підтверджено працівником.")
+            return Response({"message": "Запис успішно підтверджено!"}, status=status.HTTP_200_OK)
+        except Appointment.DoesNotExist:
+            print(f"[STAFF API ERROR] Спроба підтвердити неіснуючий запис №{pk}.")
+            return Response({"error": "Запис не знайдено."}, status=status.HTTP_404_NOT_FOUND)

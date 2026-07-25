@@ -1,11 +1,9 @@
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
 from .models import WorkingDay, Work, Appointment
-
 from .serializers import WorkingDaySerializer, WorkSerializer, AppointmentCreateSerializer, AppointmentSerializer
-
+from datetime import date
 
 class ScheduleListView(generics.ListAPIView):
     queryset = WorkingDay.objects.all().order_by('day_index')
@@ -48,7 +46,6 @@ class ClientAppointmentListView(generics.ListAPIView):
 
     def get_queryset(self):
         nickname = self.kwargs['nickname'].replace('@', '').strip()
-        from datetime import date
         return Appointment.objects.filter(client_nickname__iexact=f"@{nickname}", date__gte=date.today()).order_by('date', 'time_slot')
 
 
